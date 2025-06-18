@@ -9,7 +9,7 @@ This project provides a real-time fall detection system using video analytics an
 ## How it Works
 
 <p align="center">
-  <img src="images/fallDetection.png" alt="Fall Detection Bounding Box Comparison" width="600"/>
+  <img src="refs/heads/main/images/FallDetection.png" alt="Fall Detection Bounding Box Comparison" width="600"/>
 </p>
 
 The fall detection system leverages SceneScape’s multi-camera tracking and 3D scene understanding to robustly determine a person’s state, regardless of camera angle or position.
