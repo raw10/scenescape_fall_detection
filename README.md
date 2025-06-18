@@ -9,7 +9,7 @@ This project provides a real-time fall detection system using video analytics an
 ## How it Works
 
 <p align="center">
-  <img src="refs/heads/main/images/FallDetection.png" alt="Fall Detection Bounding Box Comparison" width="600"/>
+  <img src="images/FallDetection.png" alt="Fall Detection Bounding Box Comparison">
 </p>
 
 The fall detection system leverages SceneScape’s multi-camera tracking and 3D scene understanding to robustly determine a person’s state, regardless of camera angle or position.
@@ -17,8 +17,8 @@ The fall detection system leverages SceneScape’s multi-camera tracking and 3D 
 - **Bounding Box Comparison:**  
   For each detected person, the system computes the 2D bounding box from the camera’s perspective (the "detected bounding box") and also projects a 3D canonical bounding box for a standing person at that location into the camera view (the "projected bounding box"). By comparing the aspect ratio and area of these two boxes, the system can infer whether the person is upright or has fallen.
 
-- **Detection-Only Approach:**  
-  This system relies solely on the detection bounding boxes provided by the person detector. As long as people are detected in the scene, the fall detection logic will operate. It does **not** attempt to classify whether a person has fallen using image-based classification or deep learning on the image itself. Such classification techniques are often prone to errors due to varying camera angles, occlusions, and scene complexity. By using geometric reasoning based on bounding boxes and scene calibration, this approach remains robust across different viewpoints and camera placements.
+- **Detection and Motion Approach:**  
+  This system relies solely on the detection bounding boxes provided by the person detector and the velocity of the person tracked across the scene. As long as people are detected in the scene, the fall detection logic will operate. It does **not** attempt to classify whether a person has fallen using image-based classification or deep learning on the image itself. Such classification techniques are often prone to errors due to varying camera angles, occlusions, and scene complexity, and do not account for how people have been moving. By using geometric reasoning based on bounding boxes, scene calibration, and velocities, this approach remains robust across different viewpoints and camera placements.
 
 - **Camera-Angle Robustness:**  
   Because the projected bounding box is calculated using the camera’s intrinsic and extrinsic parameters, the comparison is robust to different camera angles, heights, and lens distortions. This means the system does not rely on a fixed camera placement or a specific viewpoint.
