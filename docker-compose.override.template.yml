@@ -1,0 +1,76 @@
+services:
+  falling-video:
+    image: scenescape-percebro:{{PERCEBRO_VERSION}}
+    init: true
+    networks:
+      - scenescape
+    depends_on:
+      web:
+        condition: service_healthy
+      broker:
+        condition: service_started
+      ntpserv:
+        condition: service_started
+    command:
+      - percebro
+      - --camera=sample_data/fall_cam_1_full.mp4
+      - --cameraid=lawn-cam1
+      - --intrinsics={"fov":70}
+      - --camera=sample_data/fall_cam_2_full.mp4
+      - --cameraid=lawn-cam2
+      - --intrinsics={"fov":70}
+      - --camerachain=atss-person
+      - --modelconfig=/opt/intel/openvino/deployment_tools/intel_models/geti/atss-person/atss-person.conf
+      - --ntp=ntpserv
+      - --auth=/run/secrets/percebro.auth
+      - broker.scenescape.intel.com
+    devices:
+      - "/dev/dri:/dev/dri"
+    volumes:
+      - ./models:/opt/intel/openvino/deployment_tools/intel_models
+      - ./sample_data:/home/scenescape/SceneScape/sample_data
+      - ./videos:/videos
+    secrets:
+      - source: root-cert
+        target: certs/scenescape-ca.pem
+      - percebro.auth
+    restart: always
+
+  fall-detection:
+    image: scenescape-controller:{{SCENESCAPE_VERSION}}
+    container_name: fall-detection
+    volumes:
+      - {{FALL_DETECTION_APP_PATH}}:/app
+    working_dir: /app
+    environment:
+      - SCENESCAPE_API_KEY=${SCENESCAPE_API_KEY}
+    networks:
+      - scenescape
+    command:
+      [
+        "python3", "/app/detect_falls.py",
+        "--broker", "broker.scenescape.intel.com",
+        "--resturl", "https://web.scenescape.intel.com:443/api/v1",
+        "--scene-uuid", "{{SCENE_UUID}}",
+        "--insecure"
+      ]
+
+  node-red:
+    image: nodered/node-red:latest
+    container_name: node-red
+    ports:
+      - "1880:1880"
+    environment:
+      - http_proxy={{HTTP_PROXY}}
+      - https_proxy={{HTTPS_PROXY}}
+      - no_proxy=localhost,127.0.0.1
+    networks:
+      - scenescape
+    volumes:
+      - ./node_red_data:/data
+
+volumes:
+  node_red_data:
+
+networks:
+  scenescape:

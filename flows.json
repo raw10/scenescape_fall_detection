@@ -1,0 +1,296 @@
+[
+    {
+        "id": "4704dfa2c82168f9",
+        "type": "tab",
+        "label": "Flow 1",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "3bec9cf06d7ed27d",
+        "type": "mqtt in",
+        "z": "4704dfa2c82168f9",
+        "name": "Fall Detection Service",
+        "topic": "scenescape/fall-detection/SCENE-UUID",
+        "qos": "2",
+        "datatype": "auto-detect",
+        "broker": "d7bbc034f31bd8cc",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 220,
+        "y": 120,
+        "wires": [
+            [
+                "a6206981415f7f27"
+            ]
+        ]
+    },
+    {
+        "id": "ad09fae71518dc61",
+        "type": "debug",
+        "z": "4704dfa2c82168f9",
+        "name": "debug 1",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 740,
+        "y": 60,
+        "wires": []
+    },
+    {
+        "id": "a6206981415f7f27",
+        "type": "function",
+        "z": "4704dfa2c82168f9",
+        "name": "function 1",
+        "func": "// Define the order of states to match the Node-RED function node outputs\nconst stateOrder = [\"fallen\", \"standing\", \"walking\", \"running\", \"falling\", \"unknown\"];\nconst counts = msg.payload.state_counts || {};\nconst outputs = [];\n\n// For each state in the desired order, push an object with payload (and topic if desired)\nfor (let i = 0; i < stateOrder.length; i++) {\n    const state = stateOrder[i];\n    outputs.push({ topic: state, payload: counts[state] !== undefined ? counts[state] : 0 });\n}\n\n// Add total people as the last output\nconst totalPeople = Array.isArray(msg.payload.people) ? msg.payload.people.length : 0;\noutputs.push({ topic: \"total\", payload: totalPeople });\n\nreturn outputs;",
+        "outputs": 7,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 480,
+        "y": 120,
+        "wires": [
+            [
+                "4cccefcb412a7a83",
+                "ad09fae71518dc61"
+            ],
+            [],
+            [
+                "752c32372a4613dd"
+            ],
+            [
+                "64cfaa445911558b"
+            ],
+            [],
+            [],
+            []
+        ]
+    },
+    {
+        "id": "4cccefcb412a7a83",
+        "type": "ui_gauge",
+        "z": "4704dfa2c82168f9",
+        "name": "Fallen",
+        "group": "2b9700f93673116a",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "gtype": "gage",
+        "title": "Fallen",
+        "label": "People",
+        "format": "{{value}}",
+        "min": 0,
+        "max": "5",
+        "colors": [
+            "#ff0000",
+            "#ff0000",
+            "#ff3838"
+        ],
+        "seg1": "",
+        "seg2": "",
+        "diff": false,
+        "className": "",
+        "x": 730,
+        "y": 120,
+        "wires": []
+    },
+    {
+        "id": "c324053bbe14dfd2",
+        "type": "ui_gauge",
+        "z": "4704dfa2c82168f9",
+        "name": "People in Scene",
+        "group": "2b9700f93673116a",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "gtype": "gage",
+        "title": "People in Scene",
+        "label": "People",
+        "format": "{{value}}",
+        "min": 0,
+        "max": "5",
+        "colors": [
+            "#00b400",
+            "#dde000",
+            "#ff3838"
+        ],
+        "seg1": "3",
+        "seg2": "4",
+        "diff": false,
+        "className": "",
+        "x": 760,
+        "y": 260,
+        "wires": []
+    },
+    {
+        "id": "752c32372a4613dd",
+        "type": "ui_gauge",
+        "z": "4704dfa2c82168f9",
+        "name": "Walking",
+        "group": "2b9700f93673116a",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "gtype": "gage",
+        "title": "Walking",
+        "label": "People",
+        "format": "{{value}}",
+        "min": 0,
+        "max": "5",
+        "colors": [
+            "#00b400",
+            "#dde000",
+            "#ff3838"
+        ],
+        "seg1": "3",
+        "seg2": "4",
+        "diff": false,
+        "className": "",
+        "x": 740,
+        "y": 160,
+        "wires": []
+    },
+    {
+        "id": "3e0d66c2c6dea844",
+        "type": "mqtt in",
+        "z": "4704dfa2c82168f9",
+        "name": "Regulated",
+        "topic": "scenescape/regulated/scene/SCENE-UUID",
+        "qos": "2",
+        "datatype": "auto-detect",
+        "broker": "d7bbc034f31bd8cc",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 180,
+        "y": 260,
+        "wires": [
+            [
+                "22127907aa8aee4e"
+            ]
+        ]
+    },
+    {
+        "id": "22127907aa8aee4e",
+        "type": "function",
+        "z": "4704dfa2c82168f9",
+        "name": "function 2",
+        "func": "let count = 0;\nif (msg.payload && Array.isArray(msg.payload.objects)) {\n    count = msg.payload.objects.filter(obj =>\n        obj.category === \"person\"\n    ).length;\n}\nmsg.payload = count;\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 480,
+        "y": 260,
+        "wires": [
+            [
+                "c324053bbe14dfd2"
+            ]
+        ]
+    },
+    {
+        "id": "64cfaa445911558b",
+        "type": "ui_gauge",
+        "z": "4704dfa2c82168f9",
+        "name": "Running",
+        "group": "2b9700f93673116a",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "gtype": "gage",
+        "title": "Running",
+        "label": "People",
+        "format": "{{value}}",
+        "min": 0,
+        "max": "5",
+        "colors": [
+            "#e00000",
+            "#e00000",
+            "#e03838"
+        ],
+        "seg1": "3",
+        "seg2": "4",
+        "diff": false,
+        "className": "",
+        "x": 740,
+        "y": 200,
+        "wires": []
+    },
+    {
+        "id": "d7bbc034f31bd8cc",
+        "type": "mqtt-broker",
+        "name": "SceneScape Broker",
+        "broker": "broker.scenescape.intel.com",
+        "port": 1883,
+        "tls": "594f5e22e4247f24",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": true,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "2b9700f93673116a",
+        "type": "ui_group",
+        "name": "Default",
+        "tab": "4d2b012c6d5c0166",
+        "order": 1,
+        "disp": true,
+        "width": "6",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "594f5e22e4247f24",
+        "type": "tls-config",
+        "name": "",
+        "cert": "",
+        "key": "",
+        "ca": "",
+        "certname": "",
+        "keyname": "",
+        "caname": "",
+        "servername": "",
+        "verifyservercert": false,
+        "alpnprotocol": ""
+    },
+    {
+        "id": "4d2b012c6d5c0166",
+        "type": "ui_tab",
+        "name": "Home",
+        "icon": "dashboard",
+        "disabled": false,
+        "hidden": false
+    }
+]
