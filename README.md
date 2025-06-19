@@ -33,8 +33,13 @@ The fall detection system leverages SceneScape’s multi-camera tracking and 3D 
 
 ## Prerequisites
 
-- **SceneScape must be running.**  
-  Follow the official SceneScape instructions to launch the out-of-box demo scenes before proceeding with this app.
+- **SceneScape must be running without existing video pipelines.**  
+
+  Follow the official SceneScape instructions to launch the out-of-box demo scenes before proceeding with this app. For performance, disable any running video pipeline services. For example, comment out existing video pipeline services in docker-compose.yml, then run:
+
+```sh
+  docker compose up -d --remove-orphans
+```
 
 - **API Key (Token) Required:**  
   1. Log in to the SceneScape web UI.
@@ -67,10 +72,7 @@ If you plan to use this fall detection system in different environments or with 
 
 ## Quick Start
 
-### 1. **Disable Existing Video Pipelines and Extract the Files **
-
-Disable any running video pipeline services. For example, comment out existing video pipeline services in docker-compose.yml, then run `docker compose up -d --remove-orphans`.
-
+### 1. **Extract the Files**
 Download and extract the provided `.zip` archive containing the fall detection app files, model, and dataset:
 
 ```sh
