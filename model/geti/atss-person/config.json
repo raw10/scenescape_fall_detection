@@ -1,0 +1,11 @@
+{
+    "task_type": "detection",
+    "model_type": "SSD",
+    "model_parameters": {
+        "labels": [
+            "person",
+            "No_object"
+        ],
+        "labels_ids": "684350fa98dfecaa64fec3b0 684350fa98dfecaa64fec3b4"
+    }
+}
