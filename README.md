@@ -4,6 +4,10 @@
 
 This project provides a real-time fall detection system using video analytics and MQTT messaging from [Intel® SceneScape](https://github.com/open-edge-platform/scenescape). The system processes camera feeds, detects people, computes features (such as aspect ratio, velocity, and bounding box area), and determines the state of each person (e.g., standing, walking, running, fallen). Results are published via MQTT and can be visualized in Node-RED dashboards.
 
+<p align="center">
+  <img src="images/dashboard.gif" alt="Fall Detection Dashboard Preview">
+</p>
+
 ---
 
 ## How it Works
