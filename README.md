@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project provides a real-time fall detection system using video analytics and MQTT messaging from Intel® SceneScape. The system processes camera feeds, detects people, computes features (such as aspect ratio, velocity, and bounding box area), and determines the state of each person (e.g., standing, walking, running, fallen). Results are published via MQTT and can be visualized in Node-RED dashboards.
+This project provides a real-time fall detection system using video analytics and MQTT messaging from [Intel® SceneScape](https://github.com/open-edge-platform/scenescape). The system processes camera feeds, detects people, computes features (such as aspect ratio, velocity, and bounding box area), and determines the state of each person (e.g., standing, walking, running, fallen). Results are published via MQTT and can be visualized in Node-RED dashboards.
 
 ---
 
@@ -67,7 +67,9 @@ If you plan to use this fall detection system in different environments or with 
 
 ## Quick Start
 
-### 1. **Extract the Files**
+### 1. **Disable Existing Video Pipelines and Extract the Files **
+
+Disable any running video pipeline services. For example, comment out existing video pipeline services in docker-compose.yml, then run `docker compose up -d --remove-orphans`.
 
 Download and extract the provided `.zip` archive containing the fall detection app files, model, and dataset:
 
