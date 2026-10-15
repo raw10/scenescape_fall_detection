@@ -37,12 +37,17 @@ The fall detection system leverages SceneScape’s multi-camera tracking and 3D 
 
 ## Prerequisites
 
-- **SceneScape must be running without existing video pipelines.**  
+- Linux with Docker Engine, Docker Compose v2, Python 3, and Git LFS.
+- A SceneScape `2026.3.x` checkout with its images and secrets initialized.
+- SceneScape must be running with the **Controller** profile. This profile starts both the Scene Controller and Analytics service that publishes regulated scene data.
 
-  Follow the official SceneScape instructions to launch the out-of-box demo scenes before proceeding with this app. For performance, disable any running video pipeline services. For example, comment out existing video pipeline services in docker-compose.yml, then run:
+If the SceneScape web certificate uses a different hostname, export `SCENESCAPE_CERT_HOSTNAME` before running `setup.py` or `uninstall.py` (for example, `export SCENESCAPE_CERT_HOSTNAME=web.example.com`). The default is `web.scenescape.intel.com`; the configured name must match the certificate.
+
+Fetch the model and video assets before setup. Git LFS pointer files are not playable media:
 
 ```sh
-  docker compose up -d --remove-orphans
+git lfs install
+git lfs pull
 ```
 
 - **API Key (Token) Required:**  
@@ -76,43 +81,41 @@ If you plan to use this fall detection system in different environments or with 
 
 ## Quick Start
 
-### 1. **Extract the Files**
-Download and extract the provided `.zip` archive containing the fall detection app files, model, and dataset:
+### 1. **Prepare SceneScape**
+
+Start the current SceneScape DL Streamer example with the Controller profile, following the SceneScape documentation. Create the scene requested by this application and obtain the `scenectrl` API token from the admin UI.
+
+### 2. **Run Setup**
 
 ```sh
-unzip fall_detection_app.zip
-cd fall_detection_app
+python3 setup.py
 ```
-
----
-
-### 2. **Run the Setup Script**
 
 The setup script will:
 - Prompt you to create a scene in SceneScape using your dataset image.
-- Copy model and video files to the correct locations.
+- Copy model and video files to the SceneScape project volumes `vol-models` and `vol-videos`.
+- Upsert both cameras with their complete calibration.
+- Build a dedicated fall-detection image derived from the current controller image.
 - Configure and start Node-RED.
 - Install required Node-RED modules.
 - Import and configure Node-RED flows.
-- Set up all necessary Docker Compose overrides.
+- Write its environment and Compose override under `.generated/` in this repository.
 
-Run:
-
-```sh
-./setup.py
-```
-
-Follow the prompts to complete the setup, including entering your SceneScape API key when requested.
+The setup does not modify files in the SceneScape checkout and does not copy SceneScape credentials into this repository.
 
 ---
 
-### 3. **Start All Services**
+### 3. **Start Services Manually**
 
-After setup completes, all services will be started automatically.  
-If you need to start them manually later, run:
+Setup starts all services automatically. To start them manually later, set `SCENESCAPE_DIR` to the checkout used during setup and run:
 
 ```sh
-docker compose up -d
+docker compose \
+  --project-directory "$SCENESCAPE_DIR" \
+  --env-file .generated/fall-detection.env \
+  -f "$SCENESCAPE_DIR/sample_data/compose/docker-compose-dl-streamer-example.yml" \
+  -f .generated/docker-compose.override.yml \
+  --profile controller up -d --build
 ```
 
 ---
@@ -129,13 +132,13 @@ docker compose up -d
 
 ### 5. **Uninstall / Clean Up**
 
-To remove all files, cameras, and configuration created by the setup, run:
+To stop and remove only this application's services and generated state, run:
 
 ```sh
-./uninstall.py
+python3 uninstall.py
 ```
 
-Follow the prompts to select which data to remove.
+The script optionally removes cameras recorded as created by this app and app-owned Node-RED data. Cameras that existed before setup are left intact. It restores the running Scene Controller to the base Compose configuration without deleting SceneScape files, environment settings, or shared Docker volumes. If an earlier setup did not record camera ownership, uninstall leaves those cameras untouched.
 
 ---
 
@@ -145,6 +148,7 @@ Follow the prompts to select which data to remove.
 fall_detection_app/
 ├── dataset/
 ├── model/
+├── Dockerfile.fall-detection
 ├── docker-compose.override.template.yml
 ├── detect_falls.py
 ├── flows.json
@@ -157,18 +161,21 @@ fall_detection_app/
 
 ## Notes
 
-- All configuration is now handled by `setup.py`—no manual editing of Docker Compose files or Node-RED flows is required.
-- The Node-RED data directory is now a bind mount (`./node_red_data`), so all flows and dashboard settings are persistent.
-- The uninstall script will prompt before removing any persistent data.
+- Configuration is handled by `setup.py`; no manual editing of SceneScape files or Node-RED flows is required.
+- The fall detector uses a standalone Alpine Python image and does not depend on the SceneScape controller image.
+- Node-RED state persists in the app-owned `node_red_data/` directory.
+- Detections are consumed from `scenescape/data/scene/<scene-id>/person` and fall results are published to `scenescape/fall-detection/<scene-id>`.
+- Only detector-observed camera bounds (`projected: false`) are used as posture evidence.
 
 ---
 
 ## Troubleshooting
 
-- If you encounter issues with secrets or permissions, ensure the `SECRETSDIR` environment variable is set to `secrets` before running Docker Compose commands.
-- For advanced debugging, check the logs of each service with:
+- Generated Compose environment values are in `.generated/fall-detection.env`. This file contains the API token and is created with mode `0600`.
+- The actual shared volume names use the Compose project prefix, normally `scenescape_vol-models` and `scenescape_vol-videos`.
+- Check service logs with the same base and override files shown above, followed by:
   ```sh
-  docker compose logs <service>
+  --profile controller logs <service>
   ```
 
 ---

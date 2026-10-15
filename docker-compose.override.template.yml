@@ -1,7 +1,106 @@
 services:
+  scene:
+    command: >
+      --restauth /run/secrets/controller.auth
+      --brokerauth /run/secrets/controller.auth
+      --broker broker.scenescape.intel.com
+      --ntp ntpserv
+      --visibility_topic unregulated
+
+  web:
+    environment:
+      - OPENBLAS_NUM_THREADS=1
+      - OMP_NUM_THREADS=1
+
+  falling-cams:
+    image: linuxserver/ffmpeg:version-8.1-cli
+    profiles:
+      - controller
+    command: -nostdin -re -stream_loop -1 -i /workspace/media/fall_cam_1_full.mp4 -re -stream_loop -1 -i /workspace/media/fall_cam_2_full.mp4 -map 0:v -c copy -f rtsp -rtsp_transport tcp rtsp://mediaserver:8554/falling-cam1 -map 1:v -c copy -f rtsp -rtsp_transport tcp rtsp://mediaserver:8554/falling-cam2
+    volumes:
+      - vol-videos:/workspace/media
+    networks:
+      - scenescape
+    depends_on:
+      - mediaserver
+    restart: always
+    pids_limit: 1000
+
   falling-video:
-    image: scenescape-percebro:{{PERCEBRO_VERSION}}
-    init: true
+    image: docker.io/intel/dlstreamer-pipeline-server:2026.3.0-20260915-weekly-ubuntu24
+    profiles:
+      - controller
+    networks:
+      - scenescape
+    tty: true
+    entrypoint: ["./run.sh"]
+    # Uncomment to use GPU acceleration
+    # devices:
+    #   - "/dev/dri:/dev/dri"
+    group_add:
+      - "109"
+      - "110"
+      - "992"
+    device_cgroup_rules:
+      - "c 189:* rmw"
+      - "c 209:* rmw"
+      - "a 189:* rwm"
+    depends_on:
+      broker:
+        condition: service_started
+      ntpserv:
+        condition: service_started
+      falling-cams:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-I", "-s", "http://localhost:8080/pipelines"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    environment:
+      - RUN_MODE=EVA
+      - ADDITIONAL_GST_PLUGIN_PATH=/home/sscape
+      - ADD_UTCTIME_TO_METADATA=true
+      - APPEND_PIPELINE_NAME_TO_PUBLISHER_TOPIC=false
+      - MQTT_HOST=broker.scenescape.intel.com
+      - MQTT_PORT=1883
+      - REST_SERVER_PORT=8080
+      - HTTPS_PROXY=${HTTPS_PROXY}
+      - https_proxy=${https_proxy}
+      - HTTP_PROXY=${HTTP_PROXY}
+      - http_proxy=${http_proxy}
+      - NO_PROXY=mediaserver,.scenescape.intel.com,${NO_PROXY}
+      - no_proxy=mediaserver,.scenescape.intel.com,${no_proxy}
+    configs:
+      - source: falling-config
+        target: /home/pipeline-server/config.json
+    volumes:
+      - {{SCENESCAPE_PATH}}/dlstreamer-pipeline-server/user_scripts/gstplugins:/home/sscape/python:ro
+      - vol-models:/home/pipeline-server/models
+      - vol-dlstreamer-pipeline-server-pipeline-root-fall:/var/cache/pipeline_root:uid=1999,gid=1999
+    secrets:
+      - source: root-cert
+        target: certs/scenescape-ca.pem
+    restart: always
+    pids_limit: 1000
+
+  fall-detection:
+    image: scenescape-fall-detection:{{SCENESCAPE_VERSION}}
+    build:
+      context: {{FALL_DETECTION_APP_PATH}}
+      dockerfile: Dockerfile.fall-detection
+    profiles:
+      - controller
+    container_name: fall-detection
+    environment:
+      - SCENESCAPE_API_KEY=${SCENESCAPE_API_KEY}
+      - HTTPS_PROXY=${HTTPS_PROXY}
+      - https_proxy=${https_proxy}
+      - HTTP_PROXY=${HTTP_PROXY}
+      - http_proxy=${http_proxy}
+      - NO_PROXY=.scenescape.intel.com,${NO_PROXY}
+      - no_proxy=.scenescape.intel.com,${no_proxy}
     networks:
       - scenescape
     depends_on:
@@ -9,68 +108,51 @@ services:
         condition: service_healthy
       broker:
         condition: service_started
-      ntpserv:
+      analytics:
         condition: service_started
-    command:
-      - percebro
-      - --camera=sample_data/fall_cam_1_full.mp4
-      - --cameraid=lawn-cam1
-      - --intrinsics={"fov":70}
-      - --camera=sample_data/fall_cam_2_full.mp4
-      - --cameraid=lawn-cam2
-      - --intrinsics={"fov":70}
-      - --camerachain=atss-person
-      - --modelconfig=/opt/intel/openvino/deployment_tools/intel_models/geti/atss-person/atss-person.conf
-      - --ntp=ntpserv
-      - --auth=/run/secrets/percebro.auth
-      - broker.scenescape.intel.com
-    devices:
-      - "/dev/dri:/dev/dri"
-    volumes:
-      - ./models:/opt/intel/openvino/deployment_tools/intel_models
-      - ./sample_data:/home/scenescape/SceneScape/sample_data
-      - ./videos:/videos
     secrets:
       - source: root-cert
         target: certs/scenescape-ca.pem
-      - percebro.auth
-    restart: always
-
-  fall-detection:
-    image: scenescape-controller:{{SCENESCAPE_VERSION}}
-    container_name: fall-detection
-    volumes:
-      - {{FALL_DETECTION_APP_PATH}}:/app
-    working_dir: /app
-    environment:
-      - SCENESCAPE_API_KEY=${SCENESCAPE_API_KEY}
-    networks:
-      - scenescape
+      - source: controller-auth-file
+        target: /run/secrets/controller.auth
+    restart: on-failure
     command:
       [
-        "python3", "/app/detect_falls.py",
         "--broker", "broker.scenescape.intel.com",
         "--resturl", "https://web.scenescape.intel.com:443/api/v1",
-        "--scene-uuid", "{{SCENE_UUID}}",
-        "--insecure"
+        "--scene-uuid", "{{SCENE_UUID}}"
       ]
 
   node-red:
     image: nodered/node-red:latest
+    profiles:
+      - controller
     container_name: node-red
     ports:
       - "1880:1880"
     environment:
-      - http_proxy={{HTTP_PROXY}}
-      - https_proxy={{HTTPS_PROXY}}
+      - http_proxy=${http_proxy}
+      - https_proxy=${https_proxy}
       - no_proxy=localhost,127.0.0.1
     networks:
       - scenescape
+    depends_on:
+      broker:
+        condition: service_started
     volumes:
-      - ./node_red_data:/data
+      - {{FALL_DETECTION_APP_PATH}}/node_red_data:/data
+
+configs:
+  falling-config:
+    file: {{FALL_DETECTION_APP_PATH}}/dlstreamer-pipeline-server/falling-config.json
 
 volumes:
   node_red_data:
+  vol-dlstreamer-pipeline-server-pipeline-root-fall:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
 
 networks:
   scenescape:

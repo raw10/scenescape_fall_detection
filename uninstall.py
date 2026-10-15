@@ -1,195 +1,147 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
-import os
-import sys
-import shutil
-import glob
-import requests
 import getpass
 import json
+import os
+import shutil
 import subprocess
-import urllib3
+import sys
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+import requests
 
-def prompt_for_scenescape_path():
-    default_path = os.path.expanduser("~/scenescape")
-    user_input = input(f"Enter the path to your SceneScape install [{default_path}]: ").strip()
-    scenescape_path = user_input if user_input else default_path
-    if not os.path.isdir(scenescape_path):
-        print(f"Directory '{scenescape_path}' does not exist. Please check the path and try again.")
-        sys.exit(1)
-    print(f"Using SceneScape install at: {scenescape_path}")
-    return scenescape_path
+SCENESCAPE_CERT_HOSTNAME = os.environ.get(
+    "SCENESCAPE_CERT_HOSTNAME", "web.scenescape.intel.com")
 
-def prompt_for_app_path():
-    default_app_path = os.getcwd()
-    app_path = input(f"Enter the path to your fall_detection_app [{default_app_path}]: ").strip()
-    return app_path if app_path else default_app_path
+class SceneScapeHTTPSAdapter(requests.adapters.HTTPAdapter):
+    def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
+        pool_kwargs["assert_hostname"] = SCENESCAPE_CERT_HOSTNAME
+        pool_kwargs["server_hostname"] = SCENESCAPE_CERT_HOSTNAME
+        return super().init_poolmanager(
+            connections, maxsize, block=block, **pool_kwargs)
 
-def prompt_for_api_key(scenescape_path):
-    api_key = os.environ.get("SCENESCAPE_API_KEY")
-    if not api_key:
-        env_path = os.path.join(scenescape_path, ".env")
-        if os.path.isfile(env_path):
-            with open(env_path) as f:
-                for line in f:
-                    if line.startswith("SCENESCAPE_API_KEY="):
-                        api_key = line.strip().split("=", 1)[1]
-                        break
-    if not api_key:
-        api_key = getpass.getpass("Enter your SceneScape API key: ")
-    return api_key
+session = requests.Session()
+session.mount("https://localhost", SceneScapeHTTPSAdapter())
 
-def delete_cameras(api_url, api_key, scene_uid):
+
+def prompt_for_path(label, default_path):
+    value = input(f"Enter the path to your {label} [{default_path}]: ").strip()
+    path = os.path.abspath(value or default_path)
+    if not os.path.isdir(path):
+        raise FileNotFoundError(f"Directory does not exist: {path}")
+    return path
+
+
+def read_env(env_path):
+    values = {}
+    if not os.path.isfile(env_path):
+        return values
+    with open(env_path, "r") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                values[key.strip()] = value
+    return values
+
+
+def compose_command(scenescape_path, override_path, env_path, *args):
+    base_compose = os.path.join(
+        scenescape_path, "sample_data", "compose",
+        "docker-compose-dl-streamer-example.yml")
+    command = [
+        "docker", "compose",
+        "--project-directory", scenescape_path,
+        "--env-file", env_path,
+        "-f", base_compose,
+    ]
+    if override_path:
+        command.extend(["-f", override_path])
+    return [*command, "--profile", "controller", *args]
+
+
+def delete_app_cameras(generated_dir, api_key, ca_cert):
+    registry_path = os.path.join(generated_dir, "created-cameras.json")
+    if not os.path.isfile(registry_path):
+        print("No camera ownership record found; leaving cameras unchanged.")
+        return
+    with open(registry_path, "r") as registry_file:
+        created_cameras = json.load(registry_file)
+    owned = {(entry["scene"], entry["uid"]) for entry in created_cameras}
+    if not owned:
+        print("No app-created cameras to delete.")
+        return
+
+    api_url = "https://localhost:443/api/v1"
     headers = {"Authorization": f"Token {api_key}"}
-    resp = requests.get(f"{api_url}/cameras?scene={scene_uid}", headers=headers, verify=False)
-    print("Status code:", resp.status_code)
-    if resp.status_code != 200:
-        print(f"Failed to fetch cameras: {resp.text}")
-        return
-    try:
-        data = resp.json()
-    except Exception as e:
-        print(f"Failed to parse JSON: {e}")
-        return
-    cameras = data.get("results", []) if isinstance(data, dict) else data
-    print("Cameras found:", cameras)
-    for cam in cameras:
-        cam_id = cam.get("uid") or cam.get("id")
-        if not cam_id:
+    response = session.get(
+        f"{api_url}/cameras", headers=headers, verify=ca_cert, timeout=10)
+    response.raise_for_status()
+    response_data = response.json()
+    cameras = response_data.get("results", response_data) \
+        if isinstance(response_data, dict) else response_data
+    for camera in cameras:
+        camera_id = camera.get("uid") or camera.get("id")
+        if (camera.get("scene"), camera_id) not in owned:
             continue
-        del_resp = requests.delete(f"{api_url}/camera/{cam_id}", headers=headers, verify=False)
-        print(f"Delete status: {del_resp.status_code}, response: {del_resp.text}")
-        if del_resp.status_code in (200, 202, 204):
-            print(f"Deleted camera: {cam.get('name', cam_id)}")
-        else:
-            print(f"Failed to delete camera {cam.get('name', cam_id)}: {del_resp.text}")
+        response = session.delete(
+            f"{api_url}/camera/{camera_id}", headers=headers,
+            verify=ca_cert, timeout=10)
+        response.raise_for_status()
+        print(f"Deleted camera: {camera_id}")
 
-def remove_copied_models(model_src, dst_models):
-    if not os.path.isdir(model_src) or not os.path.isdir(dst_models):
-        return
-
-    # Track directories from the source model structure
-    src_dirs = set()
-    for root, dirs, files in os.walk(model_src):
-        rel_dir = os.path.relpath(root, model_src)
-        src_dirs.add(rel_dir)
-
-        # Remove matching files
-        dst_dir = os.path.join(dst_models, rel_dir) if rel_dir != '.' else dst_models
-        for file in files:
-            dst_file = os.path.join(dst_dir, file)
-            if os.path.isfile(dst_file):
-                print(f"Removing model file: {dst_file}")
-                os.remove(dst_file)
-
-    # Only remove empty directories that match the source structure
-    for rel_dir in sorted(src_dirs, reverse=True):  # deepest first
-        dst_dir = os.path.join(dst_models, rel_dir) if rel_dir != '.' else dst_models
-        if os.path.isdir(dst_dir) and not os.listdir(dst_dir):
-            print(f"Removing empty model directory: {dst_dir}")
-            os.rmdir(dst_dir)
-
-def select_scene(api_url, api_key):
-    headers = {"Authorization": f"Token {api_key}"}
-    try:
-        resp = requests.get(f"{api_url}/scenes", headers=headers, verify=False, timeout=10)
-        resp.raise_for_status()
-        scenes = resp.json().get("results", []) if isinstance(resp.json(), dict) else resp.json()
-    except Exception as e:
-        print(f"Failed to retrieve scenes from API: {e}")
-        sys.exit(1)
-
-    if not scenes:
-        print("No scenes found. Please create a scene in SceneScape before continuing.")
-        sys.exit(1)
-    elif len(scenes) == 1:
-        scene = scenes[0]
-        print(f"Only one scene found: {scene.get('name', scene.get('uid', 'unknown'))} (UUID: {scene.get('uid', scene.get('uuid', ''))})")
-        return scene.get('uid') or scene.get('uuid')
-    else:
-        print("Available scenes:")
-        for idx, scene in enumerate(scenes, 1):
-            print(f"{idx}: {scene.get('name', scene.get('uid', scene.get('uuid', '')))} (UUID: {scene.get('uid', scene.get('uuid', ''))})")
-        while True:
-            try:
-                choice = int(input(f"Select a scene [1-{len(scenes)}]: "))
-                if 1 <= choice <= len(scenes):
-                    return scenes[choice - 1].get('uid') or scenes[choice - 1].get('uuid')
-            except Exception:
-                pass
-            print("Invalid selection. Please try again.")
 
 def main():
-    scenescape_path = prompt_for_scenescape_path()
-    app_path = prompt_for_app_path()
+    app_path = prompt_for_path("fall detection app", os.getcwd())
+    scenescape_path = prompt_for_path(
+        "SceneScape install", os.path.expanduser("~/scenescape"))
+    generated_dir = os.path.join(app_path, ".generated")
+    env_path = os.path.join(generated_dir, "fall-detection.env")
+    override_path = os.path.join(generated_dir, "docker-compose.override.yml")
 
-    # Remove only .mp4 files that exist in both dataset and sample_data
-    dataset_videos = set(f for f in os.listdir(os.path.join(app_path, "dataset")) if f.lower().endswith('.mp4'))
-    sample_data_dst = os.path.join(scenescape_path, "sample_data")
-    for video in dataset_videos:
-        video_path = os.path.join(sample_data_dst, video)
-        if os.path.isfile(video_path):
-            print(f"Removing video: {video_path}")
-            os.remove(video_path)
-
-    # Remove only model files that exist in both model and scenescape/models
-    model_src = os.path.join(app_path, "model")
-    dst_models = os.path.join(scenescape_path, "models")
-    remove_copied_models(model_src, dst_models)
-
-    # Remove .env file
-    env_path = os.path.join(scenescape_path, ".env")
-    if os.path.isfile(env_path):
-        print(f"Removing {env_path}")
-        os.remove(env_path)
-
-    # Remove controller.auth from app directory
-    auth_path = os.path.join(app_path, "controller.auth")
-    if os.path.isfile(auth_path):
-        print(f"Removing {auth_path}")
-        os.remove(auth_path)
-
-    # Remove node_red_data directory (optional)
-    node_red_data_path = os.path.join(scenescape_path, "node_red_data")
-    if os.path.isdir(node_red_data_path):
-        resp = input(
-            f"\nThe directory {node_red_data_path} contains all Node-RED flows and data, "
-            "including flows that may not be affiliated with this project.\n"
-            "Do you want to remove this folder? [y/N]: "
-        ).strip().lower()
-        if resp in ("y", "yes"):
-            print(f"Removing {node_red_data_path}")
-            shutil.rmtree(node_red_data_path)
-        else:
-            print(f"Keeping {node_red_data_path}")
-
-    # Delete cameras from the scene
-    api_key = prompt_for_api_key(scenescape_path)
-    api_url = "https://localhost/api/v1"
-    scene_uid = select_scene(api_url, api_key)
-    if scene_uid:
-        delete_cameras(api_url, api_key, scene_uid)
-
-    # Remove docker-compose.override.yml
-    override_path = os.path.join(scenescape_path, "docker-compose.override.yml")
-    if os.path.isfile(override_path):
-        print(f"Removing {override_path}")
-        os.remove(override_path)
-        # Ensure SECRETSDIR is set before running docker compose up
-        if "SECRETSDIR" not in os.environ or not os.environ["SECRETSDIR"]:
-            os.environ["SECRETSDIR"] = "secrets"
-            print('Set environment variable: SECRETSDIR=secrets')
-        # After removing the override, bring down any orphaned containers
-        print("Running: docker compose up -d --remove-orphans")
+    if os.path.isfile(env_path) and os.path.isfile(override_path):
         subprocess.run(
-            ["docker", "compose", "up", "-d", "--remove-orphans"],
-            cwd=scenescape_path,
-            env=os.environ
+            compose_command(
+                scenescape_path, override_path, env_path,
+                "rm", "--stop", "--force",
+                "falling-cams", "falling-video", "fall-detection", "node-red"),
+            check=True,
         )
+        base_command = compose_command(scenescape_path, None, env_path)
+        running_scene = subprocess.run(
+            [*base_command, "ps", "--status", "running", "-q", "scene"],
+            check=True, capture_output=True, text=True)
+        if running_scene.stdout.strip():
+            subprocess.run(
+                [*base_command, "up", "-d", "--no-deps", "scene"],
+                check=True)
+    else:
+        print("Generated deployment files not found; no app containers were removed.")
 
-    print("Uninstall complete.")
+    env_values = read_env(env_path)
+    api_key = os.environ.get("SCENESCAPE_API_KEY") \
+        or env_values.get("SCENESCAPE_API_KEY")
+    remove_cameras = input("Delete cameras created by this app? [y/N]: ").strip().lower()
+    if remove_cameras in ("y", "yes"):
+        api_key = api_key or getpass.getpass("SceneScape API key: ")
+        ca_cert = os.path.join(
+            scenescape_path, "manager", "secrets", "certs", "scenescape-ca.pem")
+        delete_app_cameras(generated_dir, api_key, ca_cert)
+
+    remove_node_red = input("Delete app-owned Node-RED data? [y/N]: ").strip().lower()
+    if remove_node_red in ("y", "yes"):
+        node_red_path = os.path.join(app_path, "node_red_data")
+        if os.path.isdir(node_red_path):
+            shutil.rmtree(node_red_path)
+
+    if os.path.isdir(generated_dir):
+        shutil.rmtree(generated_dir)
+    print("Uninstall complete. SceneScape files and shared volumes were left unchanged.")
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    try:
+        sys.exit(main())
+    except (OSError, requests.RequestException, subprocess.CalledProcessError) as error:
+        print(f"Uninstall failed: {error}", file=sys.stderr)
+        sys.exit(1)
