@@ -12,17 +12,26 @@ services:
       - OPENBLAS_NUM_THREADS=1
       - OMP_NUM_THREADS=1
 
+  falling-mediaserver:
+    image: bluenviron/mediamtx:1.21.3
+    profiles:
+      - controller
+    networks:
+      - scenescape
+    restart: always
+    pids_limit: 1000
+
   falling-cams:
     image: linuxserver/ffmpeg:version-8.1-cli
     profiles:
       - controller
-    command: -nostdin -re -stream_loop -1 -i /workspace/media/fall_cam_1_full.mp4 -re -stream_loop -1 -i /workspace/media/fall_cam_2_full.mp4 -map 0:v -c copy -f rtsp -rtsp_transport tcp rtsp://mediaserver:8554/falling-cam1 -map 1:v -c copy -f rtsp -rtsp_transport tcp rtsp://mediaserver:8554/falling-cam2
+    command: -nostdin -re -stream_loop -1 -i /workspace/media/fall_cam_1_full.mp4 -re -stream_loop -1 -i /workspace/media/fall_cam_2_full.mp4 -map 0:v -c copy -f rtsp -rtsp_transport tcp rtsp://falling-mediaserver:8554/falling-cam1 -map 1:v -c copy -f rtsp -rtsp_transport tcp rtsp://falling-mediaserver:8554/falling-cam2
     volumes:
       - vol-videos:/workspace/media
     networks:
       - scenescape
     depends_on:
-      - mediaserver
+      - falling-mediaserver
     restart: always
     pids_limit: 1000
 
@@ -70,8 +79,8 @@ services:
       - https_proxy=${https_proxy}
       - HTTP_PROXY=${HTTP_PROXY}
       - http_proxy=${http_proxy}
-      - NO_PROXY=mediaserver,.scenescape.intel.com,${NO_PROXY}
-      - no_proxy=mediaserver,.scenescape.intel.com,${no_proxy}
+      - NO_PROXY=falling-mediaserver,.scenescape.intel.com,${NO_PROXY}
+      - no_proxy=falling-mediaserver,.scenescape.intel.com,${no_proxy}
     configs:
       - source: falling-config
         target: /home/pipeline-server/config.json
@@ -147,6 +156,7 @@ configs:
     file: {{FALL_DETECTION_APP_PATH}}/dlstreamer-pipeline-server/falling-config.json
 
 volumes:
+  vol-videos:
   node_red_data:
   vol-dlstreamer-pipeline-server-pipeline-root-fall:
     driver: local

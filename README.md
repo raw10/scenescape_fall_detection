@@ -113,7 +113,7 @@ Setup starts all services automatically. To start them manually later, set `SCEN
 docker compose \
   --project-directory "$SCENESCAPE_DIR" \
   --env-file .generated/fall-detection.env \
-  -f "$SCENESCAPE_DIR/sample_data/compose/docker-compose-dl-streamer-example.yml" \
+  -f "$SCENESCAPE_DIR/sample_data/compose/compose.dl-streamer-example.yml" \
   -f .generated/docker-compose.override.yml \
   --profile controller up -d --build
 ```
