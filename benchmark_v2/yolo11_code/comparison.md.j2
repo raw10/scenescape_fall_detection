@@ -3,6 +3,8 @@
 YOLO results: `{{ settings.yolo_results }}`
 SceneScape baseline: `{{ settings.scenescape_results }}`
 
+Camera: {{ settings.get('camera', 'cam2') }}; reference camera: {{ settings.get('reference_camera', settings.get('camera', 'cam2')) }}.
+
 Confidence: {{ settings.confidence | display }}; fall-free gap: {{ settings.fall_free_gap_s | display }} source seconds from the first fall-free frame; no person tracking.
 Comparison slowdown: {{ (1 / settings.playback_speed) | display }}x; tolerance: +/-1 source second.
 Source timestamps are not rescaled. Replay delays are derived source delays times slowdown, not measured inference latency.
@@ -40,6 +42,14 @@ None.
 | {{ name }} | {{ yolo[name].tp }}/{{ yolo[name].fp }}/{{ yolo[name].fn }} | {{ scene[name].tp }}/{{ scene[name].fp }}/{{ scene[name].fn }} |
 {% endfor %}
 {% endif %}
+
+## Source Provenance
+
+{% for name in yolo %}
+- {{ name }}: YOLO `{{ yolo[name].get('source_video', 'not recorded') }}`; SceneScape `{{ scene[name].get('source_video', 'not recorded') }}`.
+	YOLO timing: {{ yolo[name].get('timing', 'not recorded') }}
+	SceneScape timing: {{ scene[name].get('timing', 'not recorded') }}
+{% endfor %}
 
 ## Decoder Warnings
 

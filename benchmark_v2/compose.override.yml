@@ -1,5 +1,6 @@
 services:
   scene:
+    pids_limit: -1
     command: >
       --restauth /run/secrets/controller.auth
       --brokerauth /run/secrets/controller.auth
@@ -10,7 +11,8 @@ services:
     #   OPENBLAS_NUM_THREADS: "1"
     #   OMP_NUM_THREADS: "1"
     #   MKL_NUM_THREADS: "1"
-  # web:
+  web:
+    pids_limit: -1
   #   environment:
   #     OPENBLAS_NUM_THREADS: "1"
   #     OMP_NUM_THREADS: "1"

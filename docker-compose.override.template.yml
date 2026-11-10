@@ -1,5 +1,6 @@
 services:
   scene:
+    pids_limit: -1
     command: >
       --restauth /run/secrets/controller.auth
       --brokerauth /run/secrets/controller.auth
@@ -8,9 +9,7 @@ services:
       --visibility_topic unregulated
 
   web:
-    environment:
-      - OPENBLAS_NUM_THREADS=1
-      - OMP_NUM_THREADS=1
+    pids_limit: -1
 
   falling-mediaserver:
     image: bluenviron/mediamtx:1.21.3

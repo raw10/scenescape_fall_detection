@@ -157,6 +157,165 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertIn("missing video", result["error"])
 
+    def test_selected_camera_decode_and_metadata(self):
+        backend = MagicMock()
+        backend.VideoCapture.return_value.read.side_effect = [(True, object()), (False, None)]
+        with patch("benchmark_v2.yolo11_code.main.frame_times", return_value=([0], 5, "")) as probe:
+            result = process_clip(self.directory, self.output, self.fake_model([]), backend,
+                                  self.settings, camera="cam3")
+        video = self.directory / "cam3.avi"
+        probe.assert_called_once_with(video)
+        backend.VideoCapture.assert_called_once_with(str(video))
+        self.assertEqual(result["camera"], "cam3")
+        self.assertEqual(result["reference_camera"], "cam3")
+        self.assertEqual(result["source_time_origin_s"], 5)
+        self.assertEqual(result["status"], "complete")
+
+    def test_baseline_camera_mismatch_and_combined_rejected(self):
+        self.save_baseline()
+        with self.assertRaises(ValueError):
+            comparison_speed(self.baseline, [self.directory], "cam1")
+        path = self.baseline / "chute01.json"
+        result = json.loads(path.read_text())
+        result.update(cameras=["cam1", "cam2"], reference_camera="cam2")
+        path.write_text(json.dumps(result))
+        with self.assertRaisesRegex(ValueError, "single-camera"):
+            comparison_speed(self.baseline, [self.directory])
+
+    def test_reports_forward_camera(self):
+        args = SimpleNamespace(output=self.output, data_dir=self.directory.parent,
+                               scenescape_results=self.baseline, chute="chute01", camera="cam1")
+        settings = {**self.settings, "camera": "cam1", "reference_camera": "cam1"}
+        with patch("benchmark_v2.yolo11_code.main.evaluation.evaluate", return_value=[]) as evaluate:
+            self.assertEqual(reports(args, settings), 1)
+        self.assertEqual([call.args[-1] for call in evaluate.call_args_list], ["cam1", "cam1"])
+
+    def test_chutes_process_only_explicit_list_in_one_output(self):
+        names = ["chute01", "chute02", "chute03"]
+        for name in names[1:] + ["chute24"]:
+            self.directory.with_name(name).mkdir()
+        weights = self.root / "best.pt"
+        weights.write_bytes(b"test weights")
+        output = self.root / "fresh"
+        model = MagicMock(task="detect", names={0: "non-fall", 1: "fall"})
+        model.overrides = {}
+        with patch("benchmark_v2.yolo11_code.main.YOLO", return_value=model), patch(
+                "benchmark_v2.yolo11_code.main.comparison_speed", return_value=0.25) as speed, patch(
+                "benchmark_v2.yolo11_code.main.process_clip", return_value={"status": "complete"}) as process, patch(
+                "benchmark_v2.yolo11_code.main.reports", return_value=0) as report:
+            self.assertEqual(main([
+                "--chutes", *names, "--camera", "cam3", "--weights", str(weights),
+                "--coverage-end-tolerance-s", "0.5",
+                "--data-dir", str(self.directory.parent), "--output", str(output),
+                "--scenescape-results", str(self.baseline)]), 0)
+        self.assertEqual([call.args[0].name for call in process.call_args_list], names)
+        self.assertTrue(all(call.args[1] == output and call.args[-1] == "cam3"
+                            for call in process.call_args_list))
+        self.assertEqual([directory.name for directory in speed.call_args.args[1]], names)
+        self.assertEqual(report.call_args.args[0].chutes, names)
+        saved = json.loads((output / "run.json").read_text())
+        self.assertEqual(saved["clips"], names)
+        self.assertEqual(saved["device"], "cpu")
+        self.assertEqual(saved["coverage_end_tolerance_s"], 0.5)
+        self.assertTrue(all(call.args[4]["coverage_end_tolerance_s"] == 0.5
+                            for call in process.call_args_list))
+
+    def test_reports_forward_coverage_end_tolerance_to_both_methods(self):
+        for tolerance in (0, 0.5):
+            args = SimpleNamespace(output=self.output, data_dir=self.directory.parent,
+                                   scenescape_results=self.baseline, chute="chute01")
+            if tolerance:
+                args.coverage_end_tolerance_s = tolerance
+            with self.subTest(tolerance=tolerance), patch(
+                    "benchmark_v2.yolo11_code.main.evaluation.evaluate", return_value=[]) as evaluate, patch(
+                    "benchmark_v2.yolo11_code.main.evaluation.write_report") as write_report, patch(
+                    "benchmark_v2.yolo11_code.main.write_comparison", return_value=[]) as comparison:
+                self.assertEqual(reports(args, self.settings), 1)
+            self.assertEqual([call.args[1] for call in evaluate.call_args_list],
+                             [self.output, self.baseline])
+            self.assertEqual([call.args[1] for call in write_report.call_args_list],
+                             [self.output, self.baseline])
+            for mocked in (evaluate, write_report):
+                self.assertEqual([call.kwargs["coverage_end_tolerance_s"]
+                                  for call in mocked.call_args_list], [tolerance, tolerance])
+            self.assertEqual(comparison.call_args.args[3]["coverage_end_tolerance_s"], tolerance)
+
+    def test_cli_rejects_invalid_coverage_end_tolerance_before_model_loading(self):
+        for tolerance in ("-0.1", "nan", "inf", "-inf"):
+            with self.subTest(tolerance=tolerance), patch("sys.stderr"), patch(
+                    "benchmark_v2.yolo11_code.main.YOLO") as model, patch(
+                    "benchmark_v2.yolo11_code.main.evaluation.load_json") as load, self.assertRaises(SystemExit) as raised:
+                main(["--coverage-end-tolerance-s=" + tolerance, "--evaluate-only"])
+            self.assertEqual(raised.exception.code, 2)
+            model.assert_not_called()
+            load.assert_not_called()
+
+    def test_chutes_reject_invalid_duplicate_missing_and_conflicting_selection(self):
+        selections = [(["--chutes", "chute01", "chute01"], "unique"),
+                      (["--chutes", "chute01", "../chute02"], "directory names"),
+                      (["--chutes", "chute01", "chute02"], "does not exist"),
+                      (["--chutes", "chute01", "other"], "directory names"),
+                      (["--chutes"], "expected at least one argument"),
+                      (["--chute", "chute01", "--chutes", "chute01"], "not allowed")]
+        for selection, message in selections:
+            with self.subTest(selection=selection), patch(
+                    "sys.stderr") as stderr, patch(
+                    "benchmark_v2.yolo11_code.main.YOLO") as model, self.assertRaises(SystemExit) as raised:
+                main(["--data-dir", str(self.directory.parent), *selection])
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn(message, "".join(call.args[0] for call in stderr.write.call_args_list))
+            model.assert_not_called()
+
+    def test_reports_evaluate_only_selected_chutes(self):
+        names = ["chute01", "chute02", "chute03"]
+        args = SimpleNamespace(output=self.output, data_dir=self.directory.parent,
+                               scenescape_results=self.baseline, chute=None, chutes=names)
+        with patch("benchmark_v2.yolo11_code.main.evaluation.evaluate", return_value=[]) as evaluate:
+            self.assertEqual(reports(args, self.settings), 1)
+        self.assertEqual([call.args[4] for call in evaluate.call_args_list],
+                         [name for name in names for _ in range(2)])
+        self.assertEqual([call.args[1] for call in evaluate.call_args_list],
+                         [self.output, self.baseline] * 3)
+
+    def test_evaluate_only_uses_saved_clips_and_rejects_mismatched_selection(self):
+        names = ["chute01", "chute02"]
+        self.directory.with_name("chute02").mkdir()
+        self.directory.with_name("chute03").mkdir()
+        settings = {**self.settings, "clips": names}
+        (self.output / "run.json").write_text(json.dumps(settings))
+        before = (self.output / "run.json").read_bytes()
+        arguments = ["--evaluate-only", "--data-dir", str(self.directory.parent),
+                     "--output", str(self.output), "--scenescape-results", str(self.baseline)]
+        with patch("benchmark_v2.yolo11_code.main.YOLO") as model, patch(
+                "benchmark_v2.yolo11_code.main.comparison_speed", return_value=0.25) as speed, patch(
+                "benchmark_v2.yolo11_code.main.reports", return_value=0) as report:
+            self.assertEqual(main(arguments), 0)
+            self.assertEqual(report.call_args.args[0].chutes, names)
+            self.assertEqual([directory.name for directory in speed.call_args.args[1]], names)
+            self.assertEqual(main([*arguments, "--chutes", "chute02"]), 0)
+            self.assertEqual(report.call_args.args[0].chutes, ["chute02"])
+            for selection in (["--chutes", "chute01", "chute03"], ["--chute", "chute03"]):
+                with self.subTest(selection=selection), patch("sys.stderr") as stderr, self.assertRaises(SystemExit) as raised:
+                    main([*arguments, *selection])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn("saved run clips", "".join(call.args[0] for call in stderr.write.call_args_list))
+            model.assert_not_called()
+        self.assertEqual((self.output / "run.json").read_bytes(), before)
+
+    def test_evaluate_only_legacy_settings_rejected_for_other_camera(self):
+        self.save_baseline()
+        path = self.baseline / "chute01.json"
+        result = json.loads(path.read_text())
+        result.update(camera="cam1", reference_camera="cam1")
+        path.write_text(json.dumps(result))
+        (self.output / "run.json").write_text(json.dumps(self.settings))
+        with patch("benchmark_v2.yolo11_code.main.YOLO") as model, self.assertRaises(SystemExit) as raised:
+            main(["--evaluate-only", "--camera", "cam1", "--chute", "chute01",
+                  "--data-dir", str(self.directory.parent), "--output", str(self.output),
+                  "--scenescape-results", str(self.baseline)])
+        self.assertEqual(raised.exception.code, 2)
+        model.assert_not_called()
+
     def test_baseline_speeds_include_failed_runs_and_are_not_modified(self):
         self.save_baseline()
         self.save_baseline("chute02", status="no_observed_people")
@@ -251,9 +410,12 @@ class RunnerTests(unittest.TestCase):
         before = (self.output / "run.json").read_bytes()
         with patch("benchmark_v2.yolo11_code.main.reports", return_value=0) as report:
             code = main(["--evaluate-only", "--data-dir", str(self.directory.parent),
-                         "--output", str(self.output), "--scenescape-results", str(self.baseline)])
+                         "--output", str(self.output), "--scenescape-results", str(self.baseline),
+                         "--coverage-end-tolerance-s", "0.5"])
         self.assertEqual(code, 0)
         report.assert_called_once()
+        self.assertEqual(report.call_args.args[0].coverage_end_tolerance_s, 0.5)
+        self.assertEqual(report.call_args.args[1]["coverage_end_tolerance_s"], 0.5)
         self.assertEqual((self.output / "run.json").read_bytes(), before)
         self.save_baseline(speed=0.5)
         with self.assertRaises(SystemExit) as raised:

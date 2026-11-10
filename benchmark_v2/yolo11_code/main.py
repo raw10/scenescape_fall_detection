@@ -20,6 +20,7 @@ if __package__ in (None, ""):
   sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from benchmark_v2 import evaluate as evaluation
+from benchmark_v2.cameras import camera_name
 
 
 BASE = Path(__file__).resolve().parents[1]
@@ -96,13 +97,16 @@ def frame_times(video):
   return timestamps, origin, probe.stderr.strip()
 
 
-def comparison_speed(results, directories):
+def comparison_speed(results, directories, camera="cam2"):
+  camera = camera_name(camera)
   speeds = []
   for directory in directories:
     path = results / f"{directory.name}.json"
     if not path.is_file():
       continue
     result = evaluation.load_json(path)
+    if len(evaluation.result_cameras(result, camera)) != 1:
+      raise ValueError("YOLO comparison requires a single-camera SceneScape result")
     if result.get("chute") != directory.name:
       raise ValueError(f"{path}: chute does not match directory")
     speed = evaluation.number(result.get("playback_speed"), "baseline playback_speed")
@@ -116,9 +120,13 @@ def comparison_speed(results, directories):
   return speeds[0]
 
 
-def process_clip(directory, output, model, video_backend, settings):
-  video = directory / "cam2.avi"
+def process_clip(directory, output, model, video_backend, settings, camera="cam2"):
+  camera = camera_name(camera)
+  if settings.get("camera", camera) != camera:
+    raise ValueError("YOLO settings camera does not match selected camera")
+  video = directory / f"{camera}.avi"
   result = {"chute": directory.name, "status": "failed", "events": [],
+        "camera": camera, "reference_camera": camera,
         "playback_speed": settings["playback_speed"], "detector": "yolo11-best",
         "source_video": str(video.resolve()), "settings": settings,
         "processed_frames": 0,
@@ -208,12 +216,25 @@ def write_comparison(yolo_rows, scene_rows, output, settings):
   return common
 
 
-def reports(args, settings):
+def reports(args, settings, camera=None):
+  camera = camera_name(camera if camera is not None else getattr(args, "camera", "cam2"))
+  evaluation.result_cameras(settings, camera)
   slowdown = 1 / settings["playback_speed"]
+  coverage_end_tolerance_s = getattr(args, "coverage_end_tolerance_s", 0)
+  evaluation.validate_settings(slowdown, 1, coverage_end_tolerance_s)
   output = args.output / "reports"
-  yolo_rows = evaluation.evaluate(args.data_dir, args.output, slowdown, 1, args.chute)
-  scene_rows = evaluation.evaluate(args.data_dir, args.scenescape_results, slowdown, 1, args.chute)
-  settings = {**settings, "decoder_warning_clips": []}
+  chutes = getattr(args, "chutes", None) or [args.chute]
+  yolo_rows = []
+  scene_rows = []
+  for chute in chutes:
+    yolo_rows.extend(evaluation.evaluate(args.data_dir, args.output, slowdown, 1, chute, camera,
+      coverage_end_tolerance_s=coverage_end_tolerance_s))
+    scene_rows.extend(evaluation.evaluate(args.data_dir, args.scenescape_results, slowdown, 1, chute, camera,
+      coverage_end_tolerance_s=coverage_end_tolerance_s))
+  if any(len(row.get("cameras", [camera])) != 1 for row in scene_rows):
+    raise ValueError("YOLO comparison requires single-camera SceneScape results")
+  settings = {**settings, "camera": camera, "reference_camera": camera, "decoder_warning_clips": [],
+      "coverage_end_tolerance_s": coverage_end_tolerance_s}
   for row in yolo_rows:
     path = args.output / f"{row['chute']}.json"
     if path.is_file():
@@ -222,8 +243,10 @@ def reports(args, settings):
         settings["decoder_warning_clips"].append(row["chute"])
       if row["status"] == "failed" and result.get("error"):
         row["reason"] = result["error"]
-  evaluation.write_report(yolo_rows, args.output, output / "yolo", slowdown, 1)
-  evaluation.write_report(scene_rows, args.scenescape_results, output / "scenescape", slowdown, 1)
+  evaluation.write_report(yolo_rows, args.output, output / "yolo", slowdown, 1,
+      coverage_end_tolerance_s=coverage_end_tolerance_s)
+  evaluation.write_report(scene_rows, args.scenescape_results, output / "scenescape", slowdown, 1,
+      coverage_end_tolerance_s=coverage_end_tolerance_s)
   common = write_comparison(yolo_rows, scene_rows, output, settings)
   print(f"Comparison: {output / 'comparison.md'} ({len(common)}/{len(yolo_rows)} common clips)")
   return 0 if len(common) == len(yolo_rows) and common else 1
@@ -235,28 +258,48 @@ def main(argv=None):
   parser.add_argument("--data-dir", type=Path, default=BASE / "data")
   parser.add_argument("--output", type=Path, default=BASE / "results-yolo11-best-conf04-gap025")
   parser.add_argument("--scenescape-results", type=Path, default=BASELINE)
-  parser.add_argument("--chute")
+  selection = parser.add_mutually_exclusive_group()
+  selection.add_argument("--chute")
+  selection.add_argument("--chutes", nargs="+")
+  parser.add_argument("--camera", type=camera_name, default="cam2")
   parser.add_argument("--conf", type=float, default=0.4)
   parser.add_argument("--fall-free-gap-s", type=float, default=0.25)
+  parser.add_argument("--coverage-end-tolerance-s", type=float, default=0)
   parser.add_argument("--evaluate-only", action="store_true", help="Rebuild reports without inference")
   args = parser.parse_args(argv)
   try:
+    evaluation.validate_settings(4, 1, args.coverage_end_tolerance_s)
     if not math.isfinite(args.conf) or not 0 < args.conf <= 1:
       raise ValueError("confidence must be in (0, 1]")
     FallAlerts(args.fall_free_gap_s)
-    if args.chute and (Path(args.chute).name != args.chute or not args.chute.startswith("chute")):
-      raise ValueError("--chute must be a chute directory name")
-    directories = ([args.data_dir / args.chute] if args.chute else sorted(args.data_dir.glob("chute*")))
-    directories = [directory for directory in directories if directory.is_dir()]
+    settings = evaluation.load_json(args.output / "run.json") if args.evaluate_only else None
+    requested = args.chutes or ([args.chute] if args.chute else None)
+    if settings is not None and settings.get("clips"):
+      if requested is None:
+        args.chutes = requested = settings["clips"]
+      elif any(name not in settings["clips"] for name in requested):
+        raise ValueError("selected chutes are not in saved run clips")
+    if requested is not None:
+      if len(set(requested)) != len(requested):
+        raise ValueError("selected chute names must be unique")
+      for name in requested:
+        if Path(name).name != name or not name.startswith("chute"):
+          raise ValueError("--chute/--chutes must contain chute directory names")
+        if not (args.data_dir / name).is_dir():
+          raise ValueError(f"selected chute directory does not exist: {args.data_dir / name}")
+      directories = [args.data_dir / name for name in requested]
+    else:
+      directories = sorted(directory for directory in args.data_dir.glob("chute*") if directory.is_dir())
     if not directories:
       raise ValueError("no selected chute directories found")
-    speed = comparison_speed(args.scenescape_results, directories)
+    speed = comparison_speed(args.scenescape_results, directories, args.camera)
     if args.evaluate_only:
-      settings = evaluation.load_json(args.output / "run.json")
+      evaluation.result_cameras(settings, args.camera)
       if not math.isclose(settings["playback_speed"], speed, rel_tol=1e-6, abs_tol=1e-9):
         raise ValueError("saved YOLO speed differs from selected baseline")
       settings.update(scenescape_results=str(args.scenescape_results.resolve()),
-              yolo_results=str(args.output.resolve()))
+              yolo_results=str(args.output.resolve()),
+              coverage_end_tolerance_s=args.coverage_end_tolerance_s)
       return reports(args, settings)
     if args.output.exists():
       raise ValueError(f"output already exists: {args.output}; choose a fresh --output or --evaluate-only")
@@ -269,8 +312,10 @@ def main(argv=None):
     with args.weights.open("rb") as handle:
       fingerprint = hashlib.file_digest(handle, "sha256").hexdigest()
     settings = {"weights": str(args.weights.resolve()), "weights_sha256": fingerprint,
+          "camera": args.camera, "reference_camera": args.camera,
           "task": model.task, "classes": model.names, "confidence": args.conf,
           "fall_free_gap_s": args.fall_free_gap_s, "playback_speed": speed,
+          "coverage_end_tolerance_s": args.coverage_end_tolerance_s,
           "image_size": model.overrides.get("imgsz", 640), "device": "cpu",
           "versions": {name: version(name) for name in ("ultralytics", "torch", "opencv-python")},
           "scenescape_results": str(args.scenescape_results.resolve()),
@@ -280,7 +325,7 @@ def main(argv=None):
     write_json(args.output / "run.json", settings)
     failed = False
     for directory in directories:
-      result = process_clip(directory, args.output, model, cv2, settings)
+      result = process_clip(directory, args.output, model, cv2, settings, args.camera)
       failed |= result["status"] != "complete"
     return max(int(failed), reports(args, settings))
   except (ValueError, OSError, RuntimeError, ImportError, KeyError, TypeError, subprocess.SubprocessError) as error:

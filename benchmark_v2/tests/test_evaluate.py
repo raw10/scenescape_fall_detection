@@ -9,6 +9,21 @@ from benchmark_v2.evaluate import aggregate, evaluate, metrics, score, validate_
 
 
 class MatchingTests(unittest.TestCase):
+    def test_coverage_end_allowance_is_strict_and_does_not_extend_events(self):
+        falls = [{"start_s": 9, "end_s": 20.49}]
+        with self.assertRaises(ValueError):
+            score(falls, [], 20, 4)
+        result = score(falls, [{"video_time_s": 20}], 20, 4,
+                       coverage_end_tolerance_s=0.5)
+        self.assertEqual(result["tp"], 1)
+        self.assertEqual(result["details"][0]["fall"], falls[0])
+        with self.assertRaises(ValueError):
+            score([{"start_s": 9, "end_s": 20.5}], [], 20, 4,
+                  coverage_end_tolerance_s=0.5)
+        with self.assertRaisesRegex(ValueError, "outside video duration"):
+            score(falls, [{"video_time_s": 20.1}], 20, 4,
+                  coverage_end_tolerance_s=0.5)
+
     def evaluate(self, times, falls=None, slowdown=4, tolerance=1):
         if falls is None:
             falls = [{"start_s": 9, "end_s": 12}]
@@ -206,6 +221,72 @@ class EvaluationTests(unittest.TestCase):
             evaluate(self.data, self.root / "absent", 4)
         with self.assertRaises(ValueError):
             evaluate(self.data, self.results, 4, chute="chute99")
+
+    def test_selected_camera_duration(self):
+        self.result.update(camera="cam1", reference_camera="cam1")
+        self.save()
+        with patch("benchmark_v2.evaluate.video_duration", return_value=20) as duration:
+            row = evaluate(self.data, self.results, 4, camera="cam1")[0]
+        duration.assert_called_once_with(self.directory / "cam1.avi")
+        self.assertEqual(row["reference_camera"], "cam1")
+
+    def test_invalid_camera_rejected(self):
+        with self.assertRaises(ValueError):
+            evaluate(self.data, self.results, 4, camera="../cam1")
+
+    def test_metadata_mismatch_and_legacy_cam2_only(self):
+        for metadata in ({}, {"camera": "cam2"}, {"camera": "cam1", "reference_camera": "cam2"},
+                         {"cameras": ["cam1", "cam2"], "reference_camera": "cam2"}):
+            self.result.update(metadata)
+            self.save()
+            with self.subTest(metadata=metadata), self.assertRaises(ValueError):
+                evaluate(self.data, self.results, 4, camera="cam1")
+
+    def test_unreviewed_still_validates_and_preserves_camera_metadata(self):
+        self.annotation["reviewed"] = False
+        self.result.update(camera="cam1", reference_camera="cam1", timing="source seconds")
+        self.save()
+        with self.assertRaises(ValueError):
+            self.run_evaluation()
+        row = evaluate(self.data, self.results, 4, camera="cam1")[0]
+        self.assertEqual(row["status"], "unreviewed")
+        self.assertEqual(row["timing"], "source seconds")
+
+    def test_combined_coverage_and_provenance(self):
+        self.result.update(cameras=["cam1", "cam2"], reference_camera="cam2",
+                           source_windows={name: {"source_start_s": 0, "source_end_s": 19}
+                                           for name in ("cam1", "cam2")})
+        self.save()
+        with patch("benchmark_v2.evaluate.video_origin", return_value=0):
+            row = self.run_evaluation()[0]
+        self.assertEqual(row["cameras"], ["cam1", "cam2"])
+        self.assertEqual(row["source_windows"], self.result["source_windows"])
+        with patch("benchmark_v2.evaluate.video_duration", side_effect=[20, 10]), self.assertRaises(ValueError):
+            self.run_evaluation()
+        with patch("benchmark_v2.evaluate.video_origin", side_effect=[0, 1]), self.assertRaisesRegex(
+                ValueError, "timeline"):
+            self.run_evaluation()
+        self.result["source_windows"]["cam1"]["source_start_s"] = 10
+        self.save()
+        with patch("benchmark_v2.evaluate.video_origin", return_value=0), self.assertRaisesRegex(
+                ValueError, "fully cover"):
+            self.run_evaluation()
+
+    def test_replay_metadata_per_camera_coverage(self):
+        self.result.update(selected_cameras=["cam1", "cam2"], reference_camera="cam2",
+                           source_start_s=0, source_end_s=19,
+                           per_camera={name: {"source_start_s": 0, "source_end_s": 19}
+                                       for name in ("cam1", "cam2")})
+        self.save()
+        with patch("benchmark_v2.evaluate.video_origin", return_value=0):
+            row = self.run_evaluation()[0]
+        self.assertEqual(row["cameras"], ["cam1", "cam2"])
+        self.assertEqual(row["per_camera"], self.result["per_camera"])
+        self.result["per_camera"]["cam1"]["source_end_s"] = 10
+        self.save()
+        with patch("benchmark_v2.evaluate.video_origin", return_value=0), self.assertRaisesRegex(
+                ValueError, "fully cover"):
+            self.run_evaluation()
 
 
 if __name__ == "__main__":
