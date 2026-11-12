@@ -35,6 +35,21 @@ The fall detection system leverages SceneScape’s multi-camera tracking and 3D 
 
 ---
 
+## Performance Evaluation
+
+On 21 commonly scored benchmark clips containing 26 labeled falls, SceneScape
+fall detection detected **23 falls with only 3 misses**, achieving **88.5% recall**.
+Compared with the YOLO11 fall-model baseline under the evaluated settings, it
+produced **55% fewer false alerts** (42 versus 94) and a higher **F1 score**
+(0.505 versus 0.310). YOLO11 had a shorter median source-time alert delay.
+
+See the [performance evaluation](benchmark_v2/docs/performance.md) for the
+comparison, methodology, coverage exclusions, limitations, and detailed reports.
+These are accuracy results for the evaluated pipelines, not a runtime benchmark
+or a claim of deployment-ready alarm reliability.
+
+---
+
 ## Prerequisites
 
 - Linux with Docker Engine, Docker Compose v2, Python 3, and Git LFS.

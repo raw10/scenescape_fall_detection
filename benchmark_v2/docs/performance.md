@@ -1,5 +1,11 @@
 # Fall Detection Performance
 
+For the newer eight-camera experiment, see the
+[full multiview benchmark report](performance-multiview.md), which prioritizes
+missed falls and compares all views on 20 shared chutes containing 23 labeled
+falls. The report below preserves the earlier 21-clip, 26-fall experiment;
+its scores must not be mixed with the newer run.
+
 ## Summary
 
 SceneScape's geometry- and motion-based fall detection achieved **higher precision,
