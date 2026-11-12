@@ -1,0 +1,62 @@
+# YOLO11 Versus SceneScape
+
+YOLO results: `{{ settings.yolo_results }}`
+SceneScape baseline: `{{ settings.scenescape_results }}`
+
+Camera: {{ settings.get('camera', 'cam2') }}; reference camera: {{ settings.get('reference_camera', settings.get('camera', 'cam2')) }}.
+
+Confidence: {{ settings.confidence | display }}; fall-free gap: {{ settings.fall_free_gap_s | display }} source seconds from the first fall-free frame; no person tracking.
+Comparison slowdown: {{ (1 / settings.playback_speed) | display }}x; tolerance: +/-1 source second.
+Source timestamps are not rescaled. Replay delays are derived source delays times slowdown, not measured inference latency.
+
+YOLO coverage: {{ yolo_coverage }}/{{ yolo | length }}.
+SceneScape coverage: {{ scene_coverage }}/{{ scene | length }}.
+Common scored clips: {{ common | length }}/{{ yolo | length }}.
+
+Common clips: {{ common | join(', ') if common else 'none; NOT COMPARABLE.' }}
+
+## Exclusions
+
+{% for name in excluded %}
+- {{ name }}: YOLO: {{ yolo[name].status }} {{ yolo[name].get('reason', '') }}; SceneScape: {{ scene[name].status }} {{ scene[name].get('reason', '') }}
+{% else %}
+None.
+{% endfor %}
+{% if common %}
+
+## Common-Clip Totals
+
+| Method | {{ columns | join(' | ') }} |
+| --- | {% for column in columns %}--- | {% endfor %}
+
+{% for record in records %}
+| {{ record.method }} | {% for column in columns %}{{ record[column] | display }} | {% endfor %}
+
+{% endfor %}
+
+## Paired Clips
+
+| Clip | YOLO TP/FP/FN | SceneScape TP/FP/FN |
+| --- | --- | --- |
+{% for name in common %}
+| {{ name }} | {{ yolo[name].tp }}/{{ yolo[name].fp }}/{{ yolo[name].fn }} | {{ scene[name].tp }}/{{ scene[name].fp }}/{{ scene[name].fn }} |
+{% endfor %}
+{% endif %}
+
+## Source Provenance
+
+{% for name in yolo %}
+- {{ name }}: YOLO `{{ yolo[name].get('source_video', 'not recorded') }}`; SceneScape `{{ scene[name].get('source_video', 'not recorded') }}`.
+	YOLO timing: {{ yolo[name].get('timing', 'not recorded') }}
+	SceneScape timing: {{ scene[name].get('timing', 'not recorded') }}
+{% endfor %}
+
+## Decoder Warnings
+
+Recovered frames were allowed only with matching timestamps and full frame counts. Warnings are saved in each clip's JSON result.
+Clips with warnings: {{ settings.get('decoder_warning_clips', []) | join(', ') or 'none.' }}
+
+## Limits
+
+These are complete-pipeline results, not an isolated classifier or runtime benchmark. YOLO uses clip-global alerts; SceneScape uses person transitions. Clip-global grouping can merge nearby or simultaneous people. Failed runs are not successful zero-alert runs.
+Individual report.md files contain source alert timestamps, missed intervals and delay details.

@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+/data/
+/data-multiview/
+/detections*/
+/overlays*/
+/reports/
+/results*/
+*.pt
+*.onnx
+*.avi
+*.mp4
+*.webp
+*.glb
+plan.md

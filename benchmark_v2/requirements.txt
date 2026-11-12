@@ -1,0 +1,6 @@
+numpy
+requests
+scipy
+trimesh>=4.6
+jinja2>=3.1,<4
+matplotlib>=3.9,<4

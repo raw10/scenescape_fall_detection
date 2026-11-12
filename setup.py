@@ -108,7 +108,7 @@ def copy_model_and_videos(project_dir, compose_project_name):
 
 def compose_command(scenescape_path, override_path, env_path, *args):
     base_compose = os.path.join(
-        scenescape_path, "sample_data", "compose", "docker-compose-dl-streamer-example.yml")
+        scenescape_path, "sample_data", "compose", "compose.dl-streamer-example.yml")
     return [
         "docker", "compose",
         "--project-directory", scenescape_path,
@@ -124,20 +124,10 @@ def start_manager(scenescape_path, override_path, env_path):
     subprocess.run(
         compose_command(
             scenescape_path, override_path, env_path,
-            "up", "-d", "web"),
+            "up", "-d", "--wait", "--wait-timeout", "180", "web"),
         check=True,
     )
-    readiness_url = "https://localhost:443/api/v1/database-ready"
-    for _ in range(30):
-        try:
-            response = session.get(readiness_url, timeout=5)
-            if response.ok and response.json().get("databaseReady") is True:
-                print("SceneScape manager is ready.")
-                return
-        except (requests.RequestException, ValueError):
-            pass
-        time.sleep(2)
-    raise RuntimeError("SceneScape manager did not become ready in time.")
+    print("SceneScape manager is ready.")
 
 def get_scenes(api_key, scenescape_path):
     # Use the local API endpoint for scenes
