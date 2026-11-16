@@ -47,7 +47,7 @@ def read_env(env_path):
 def compose_command(scenescape_path, override_path, env_path, *args):
     base_compose = os.path.join(
         scenescape_path, "sample_data", "compose",
-        "docker-compose-dl-streamer-example.yml")
+        "compose.dl-streamer-example.yml")
     command = [
         "docker", "compose",
         "--project-directory", scenescape_path,
@@ -103,7 +103,8 @@ def main():
             compose_command(
                 scenescape_path, override_path, env_path,
                 "rm", "--stop", "--force",
-                "falling-cams", "falling-video", "fall-detection", "node-red"),
+                "falling-cams", "falling-video", "fall-detection", "node-red",
+                "falling-mediaserver"),
             check=True,
         )
         base_command = compose_command(scenescape_path, None, env_path)

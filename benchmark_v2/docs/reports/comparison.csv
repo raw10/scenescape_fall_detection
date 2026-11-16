@@ -1,0 +1,3 @@
+method,common_clips,gt,tp,fp,fn,duplicate_fp,outside_window_fp,precision,recall,f1,median_delay_source_s,median_delay_replay_s
+YOLO11,21,26,22,94,4,25,69,0.190,0.846,0.310,0.200,0.800
+SceneScape,21,26,23,42,3,18,24,0.354,0.885,0.505,1.233,4.933
